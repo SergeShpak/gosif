@@ -1,0 +1,4 @@
+gosif
+
+tests/**/main.gen.go
+tests/**/test_bin
