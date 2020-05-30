@@ -2,3 +2,5 @@ gosif
 
 tests/**/main.gen.go
 tests/**/test_bin
+
+examples/**/main.gen.go
