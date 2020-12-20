@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"text/template"
+
+	"github.com/SergeyShpak/gosif/generator/types"
 )
 
 type tmplCastFunctionNameInput struct {
@@ -241,8 +243,8 @@ e.g. ./generated-binary {{$exampleScriptName}}
 
 type tmplFuncHelpFunctionInput struct {
 	FunctionName  string
-	Flags         []flag
-	RequiredFlags []flag
+	Flags         []types.Flag
+	RequiredFlags []types.Flag
 }
 
 var tmplFuncHelpFunction = template.Must(template.New("FuncHelpFunction").
@@ -262,8 +264,8 @@ func gosif_Show{{.FunctionName}}Help(stream *os.File) {
 }`))
 
 type tmplParseFlagsFuncInput struct {
-	FuncFlags     []flag
-	RequiredFlags []flag
+	FuncFlags     []types.Flag
+	RequiredFlags []types.Flag
 	Cases         []string
 	FunctionName  string
 }
@@ -310,7 +312,7 @@ var tmplRunScriptFuncName = template.Must(tmplParseLoopName.New("RunScriptFuncNa
 
 type funcFlagStructureTmplInput struct {
 	FunctionName string
-	Flags        []flag
+	Flags        []types.Flag
 }
 
 var tmplFuncFlagsStruct = template.Must(tmplRunScriptFuncName.New("FuncFlagsStruct").Parse(`
