@@ -350,14 +350,28 @@ func composeFlagsList(params []*FuncParamData, fn *FuncForGenerator) ([]types.Fl
 func generateFuncHelpFunction(fn *parser.PkgFunc, flags []types.Flag, requiredFlags []types.Flag) (string, error) {
 	in := &tmplFuncHelpFunctionInput{
 		FunctionName:  fn.Name,
-		Flags:         flags,
-		RequiredFlags: requiredFlags,
+		Flags:         flagsToHelpFlags(flags),
+		RequiredFlags: flagsToHelpFlags(requiredFlags),
 	}
 	out, err := generateFromTemplate(tmplFuncHelpFunction, in)
 	if err != nil {
 		return "", err
 	}
 	return out, nil
+}
+
+func flagsToHelpFlags(flags []types.Flag) []helpFlagData {
+	helpFlags := make([]helpFlagData, len(flags))
+	for i, f := range flags {
+		helpFlags[i] = helpFlagData{
+			Name: f.Name,
+			Type: f.Type,
+		}
+		if f.ShortName != nil && *f.ShortName != f.Name {
+			helpFlags[i].ShortName = f.ShortName
+		}
+	}
+	return helpFlags
 }
 
 //TODO: refactor

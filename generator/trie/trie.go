@@ -57,7 +57,7 @@ func (t *argsTrie) getShortNameAux(name []rune, currIdx int, lastSplitPos int) *
 		return &result
 	}
 	if t.isValid {
-		lastSplitPos = currIdx + 1
+		lastSplitPos = currIdx
 	} else if len(t.next) > 1 {
 		lastSplitPos = currIdx
 	}

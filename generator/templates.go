@@ -241,10 +241,16 @@ e.g. ./generated-binary {{$exampleScriptName}}
 	fmt.Fprint(stream, helpMsg)	
 }`))
 
+type helpFlagData struct {
+	Name      string
+	ShortName *string
+	Type      string
+}
+
 type tmplFuncHelpFunctionInput struct {
 	FunctionName  string
-	Flags         []types.Flag
-	RequiredFlags []types.Flag
+	Flags         []helpFlagData
+	RequiredFlags []helpFlagData
 }
 
 var tmplFuncHelpFunction = template.Must(template.New("FuncHelpFunction").
@@ -253,11 +259,11 @@ func gosif_Show{{.FunctionName}}Help(stream *os.File) {
 	helpMsg := ` + "`" + `Function {{.FunctionName}}
 	Required options:
 		{{- range $flag := .RequiredFlags }}
-		--{{$flag.Name | printf "%-10s"}}{{$flag.Type}}
+		{{if $flag.ShortName}} -{{$flag.ShortName}} /{{end}} --{{$flag.Name | printf "%-10s"}}{{$flag.Type}}
 		{{- end }}
 	Available options:
 		{{- range $flag := .Flags }}
-		--{{$flag.Name | printf "%-10s"}}{{$flag.Type}}
+		{{if $flag.ShortName}} -{{$flag.ShortName}} /{{end}} --{{$flag.Name | printf "%-10s"}}{{$flag.Type}}
 		{{- end }}
 ` + "`" + `
 	fmt.Fprint(stream, helpMsg)
