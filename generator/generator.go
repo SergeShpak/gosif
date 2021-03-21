@@ -11,6 +11,9 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/SergeyShpak/gosif/generator/trie"
+
+	"github.com/SergeyShpak/gosif/generator/types"
 	"github.com/SergeyShpak/gosif/parser"
 )
 
@@ -49,6 +52,122 @@ func GenerateScriptsForDir(dir string) error {
 	return nil
 }
 
+type FuncForGenerator struct {
+	ParsedFunc     *parser.PkgFunc
+	OptionalParams []*FuncParamData
+	RequiredParams []*FuncParamData
+	Imports        map[string]struct{}
+}
+
+func extractDataFromParsedFunction(fn *parser.PkgFunc) (*FuncForGenerator, error) {
+	data := &FuncForGenerator{
+		ParsedFunc:     fn,
+		OptionalParams: make([]*FuncParamData, 0),
+		RequiredParams: make([]*FuncParamData, 0),
+		Imports:        make(map[string]struct{}),
+	}
+	for i, param := range fn.Parameters {
+		paramData, err := extractDataFromFuncParam(param)
+		if err != nil {
+			return nil, fmt.Errorf("failed to analyse parameters #%d \"%s\": %v", i, param.Name, err)
+		}
+		if paramData.IsOptional {
+			data.OptionalParams = append(data.OptionalParams, paramData)
+		} else {
+			data.RequiredParams = append(data.RequiredParams, paramData)
+		}
+		for _, imp := range paramData.Imports {
+			if _, ok := data.Imports[imp]; !ok {
+				data.Imports[imp] = struct{}{}
+			}
+		}
+	}
+	allFlags := make([]*types.Flag, 0, len(fn.Parameters))
+	for _, param := range data.OptionalParams {
+		allFlags = append(allFlags, param.Flag)
+	}
+	for _, param := range data.RequiredParams {
+		allFlags = append(allFlags, param.Flag)
+	}
+	if err := generateShortFlagsNames(allFlags); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+type FuncParamData struct {
+	RawParam   *parser.FuncParam
+	Flag       *types.Flag
+	IsOptional bool
+	Imports    []string
+}
+
+func extractDataFromFuncParam(param *parser.FuncParam) (*FuncParamData, error) {
+	if !isParamTypeKnown(param.Type.Base.CoreType) {
+		return nil, fmt.Errorf("type %s is unknown", param.Type.Base.CoreType)
+	}
+	data := &FuncParamData{
+		RawParam: param,
+		Flag: &types.Flag{
+			Name: param.Name,
+			Type: param.Type.ToString(),
+		},
+		IsOptional: !isParameterRequired(param),
+		Imports:    getRequiredImportsForParam(param),
+	}
+	return data, nil
+}
+
+func generateShortFlagsNames(flags []*types.Flag) error {
+	nameFlagDict := make(map[string]*types.Flag)
+	names := make([]string, len(flags))
+	for i, f := range flags {
+		nameFlagDict[f.Name] = f
+		names[i] = f.Name
+	}
+	shortNames, err := trie.GetShortNames(names)
+	if err != nil {
+		return err
+	}
+	if len(shortNames) != len(flags) {
+		return fmt.Errorf("unexpected number of short names generated: expected %d, got %d", len(shortNames), len(flags))
+	}
+	for name, shortName := range shortNames {
+		f, ok := nameFlagDict[name]
+		if !ok {
+			return fmt.Errorf("generated a short name for an unexpected argument %s", name)
+		}
+		f.ShortName = shortName
+	}
+	return nil
+}
+
+func isParamTypeKnown(paramType string) bool {
+	validTypes := map[string]struct{}{
+		"string":     {},
+		"int":        {},
+		"int8":       {},
+		"int16":      {},
+		"int32":      {},
+		"int64":      {},
+		"uint":       {},
+		"uint8":      {},
+		"uint16":     {},
+		"uint32":     {},
+		"uint64":     {},
+		"bool":       {},
+		"float32":    {},
+		"float64":    {},
+		"error":      {},
+		"complex64":  {},
+		"complex128": {},
+		"byte":       {},
+		"rune":       {},
+	}
+	_, ok := validTypes[paramType]
+	return ok
+}
+
 func createMain(mainPkgFunction *parser.PackageFunctions) (string, error) {
 	outs := make([]string, 0, len(mainPkgFunction.Functions))
 	// TODO: move importsMap and castFuncsMap to output
@@ -58,17 +177,27 @@ func createMain(mainPkgFunction *parser.PackageFunctions) (string, error) {
 	predefinedFuncsMap := make(map[string]string)
 	treatedFunctions := make([]*parser.PkgFunc, 0, len(mainPkgFunction.Functions))
 	var shouldAppendParsingFunctions bool
-	for _, pkgFn := range mainPkgFunction.Functions {
-		out, err := generateFromFunction(pkgFn, importsMap, castFuncsMap, indirFuncsMap, predefinedFuncsMap)
+	for _, rawFn := range mainPkgFunction.Functions {
+		processedFn, err := extractDataFromParsedFunction(rawFn)
+		if err != nil {
+			log.Printf("[WARN]: skipping function %s: %v", rawFn.Name, err)
+			continue
+		}
+		for imp := range processedFn.Imports {
+			if _, ok := importsMap[imp]; !ok {
+				importsMap[imp] = struct{}{}
+			}
+		}
+		out, err := generateFromFunction(processedFn, castFuncsMap, indirFuncsMap, predefinedFuncsMap)
 		if len(out) != 0 {
 			shouldAppendParsingFunctions = true
 		}
 		if err != nil {
-			log.Printf("[WARN]: skipping function %s: %v", pkgFn.Name, err)
+			log.Printf("[WARN]: skipping function %s: %v", rawFn.Name, err)
 			continue
 		}
 		outs = append(outs, out)
-		treatedFunctions = append(treatedFunctions, pkgFn)
+		treatedFunctions = append(treatedFunctions, rawFn)
 	}
 	if shouldAppendParsingFunctions {
 		outs = append(outs, gosifFuncs)
@@ -118,74 +247,49 @@ func generateScriptsHelpFunction(functions []*parser.PkgFunc) (string, error) {
 	return helpFunc, err
 }
 
-var validTypes map[string]struct{} = map[string]struct{}{
-	"string":     {},
-	"int":        {},
-	"int8":       {},
-	"int16":      {},
-	"int32":      {},
-	"int64":      {},
-	"uint":       {},
-	"uint8":      {},
-	"uint16":     {},
-	"uint32":     {},
-	"uint64":     {},
-	"bool":       {},
-	"float32":    {},
-	"float64":    {},
-	"error":      {},
-	"complex64":  {},
-	"complex128": {},
-	"byte":       {},
-	"rune":       {},
-}
-
 // TODO: Refactor
-func generateFromFunction(fn *parser.PkgFunc, importsMap map[string]struct{}, castFuncsMap map[string]string, indirFuncsMap map[string]string, predefinedFuncsMap map[string]string) (string, error) {
-	if len(fn.Parameters) == 0 {
+func generateFromFunction(fn *FuncForGenerator, castFuncsMap map[string]string, indirFuncsMap map[string]string, predefinedFuncsMap map[string]string) (string, error) {
+	if len(fn.ParsedFunc.Parameters) == 0 {
 		return "", nil
 	}
-	flags := make([]flag, len(fn.Parameters))
-	cases := make([]string, len(fn.Parameters))
-	requiredFlags := make([]flag, 0, len(fn.Parameters))
-	for i, param := range fn.Parameters {
-		if _, ok := validTypes[param.Type.Base.CoreType]; !ok {
-			return "", fmt.Errorf("NYI: %s", param.Type.Base.CoreType)
-		}
-		f, err := newFlag(param)
-		if err != nil {
-			return "", err
-		}
-		flags[i] = *f
-		addImports(param, importsMap)
-		paramCase, err := generateCase(param, f)
+	cases := make([]string, len(fn.OptionalParams)+len(fn.RequiredParams))
+	params := fn.RequiredParams[:]
+	params = append(params, fn.OptionalParams...)
+	for i, param := range params {
+		// TODO: generate during parameter parsing
+		paramCase, err := generateCase(param.RawParam, param.Flag)
 		if err != nil {
 			return "", fmt.Errorf("case generation failed: %v", err)
 		}
 		cases[i] = paramCase
-		if _, ok := castFuncsMap[param.Type.Base.CoreType]; !ok {
+		if _, ok := castFuncsMap[param.RawParam.Type.Base.CoreType]; !ok {
 			// TODO: do not pass castFuncsMap to this function
-			castFn, err := generateCastFunction(param.Type.Base.CoreType, castFuncsMap, predefinedFuncsMap)
+			castFn, err := generateCastFunction(param.RawParam.Type.Base.CoreType, castFuncsMap, predefinedFuncsMap)
 			if err != nil {
 				return "", fmt.Errorf("generating a cast function failed: %v", err)
 			}
-			if param.Type.Base.CoreType != "byte" {
-				castFuncsMap[param.Type.Base.CoreType] = castFn
+			if param.RawParam.Type.Base.CoreType != "byte" {
+				castFuncsMap[param.RawParam.Type.Base.CoreType] = castFn
 			}
 		}
-		if err := generateIndirFuncs(param, indirFuncsMap); err != nil {
+		if err := generateIndirFuncs(param.RawParam, indirFuncsMap); err != nil {
 			return "", err
 		}
-		if isParameterRequired(param) {
-			requiredFlags = append(requiredFlags, *f)
-		}
 	}
-	if len(requiredFlags) != 0 {
+	if len(fn.RequiredParams) != 0 {
 		predefinedFuncsMap[funcCheckRequiredFlags.name] = funcCheckRequiredFlags.body
+	}
+	flags, err := composeFlagsList(params, fn)
+	if err != nil {
+		return "", err
+	}
+	requiredFlags := make([]types.Flag, 0, len(fn.RequiredParams))
+	for _, p := range fn.RequiredParams {
+		requiredFlags = append(requiredFlags, *p.Flag)
 	}
 	flagStructTmplInput := &funcFlagStructureTmplInput{
 		Flags:        flags,
-		FunctionName: fn.Name,
+		FunctionName: fn.ParsedFunc.Name,
 	}
 	out1, err := generateFromTemplate(tmplFuncFlagsStruct, flagStructTmplInput)
 	if err != nil {
@@ -195,7 +299,7 @@ func generateFromFunction(fn *parser.PkgFunc, importsMap map[string]struct{}, ca
 		Cases:         cases,
 		FuncFlags:     flags,
 		RequiredFlags: requiredFlags,
-		FunctionName:  fn.Name,
+		FunctionName:  fn.ParsedFunc.Name,
 	}
 	out2, err := generateFromTemplate(tmplParseFlagsFunc, parseFlagsFuncTmplIn)
 	if err != nil {
@@ -206,7 +310,7 @@ func generateFromFunction(fn *parser.PkgFunc, importsMap map[string]struct{}, ca
 	if err != nil {
 		return "", err
 	}
-	funcHelp, err := generateFuncHelpFunction(fn, flags, requiredFlags)
+	funcHelp, err := generateFuncHelpFunction(fn.ParsedFunc, flags, requiredFlags)
 	if err != nil {
 		return "", err
 	}
@@ -214,17 +318,60 @@ func generateFromFunction(fn *parser.PkgFunc, importsMap map[string]struct{}, ca
 	return out, nil
 }
 
-func generateFuncHelpFunction(fn *parser.PkgFunc, flags []flag, requiredFlags []flag) (string, error) {
+func composeFlagsList(params []*FuncParamData, fn *FuncForGenerator) ([]types.Flag, error) {
+	flags := make([]types.Flag, 0, len(params))
+	for _, p := range fn.ParsedFunc.Parameters {
+		found := false
+		for _, rf := range fn.RequiredParams {
+			if rf.RawParam.Name == p.Name {
+				flags = append(flags, *rf.Flag)
+				found = true
+				break
+			}
+		}
+		if found {
+			continue
+		}
+		for _, of := range fn.OptionalParams {
+			if of.RawParam.Name == p.Name {
+				flags = append(flags, *of.Flag)
+				found = true
+				break
+			}
+		}
+		if found {
+			continue
+		}
+		return nil, fmt.Errorf("flag %s not found", p.Name)
+	}
+	return flags, nil
+}
+
+func generateFuncHelpFunction(fn *parser.PkgFunc, flags []types.Flag, requiredFlags []types.Flag) (string, error) {
 	in := &tmplFuncHelpFunctionInput{
 		FunctionName:  fn.Name,
-		Flags:         flags,
-		RequiredFlags: requiredFlags,
+		Flags:         flagsToHelpFlags(flags),
+		RequiredFlags: flagsToHelpFlags(requiredFlags),
 	}
 	out, err := generateFromTemplate(tmplFuncHelpFunction, in)
 	if err != nil {
 		return "", err
 	}
 	return out, nil
+}
+
+func flagsToHelpFlags(flags []types.Flag) []helpFlagData {
+	helpFlags := make([]helpFlagData, len(flags))
+	for i, f := range flags {
+		helpFlags[i] = helpFlagData{
+			Name: f.Name,
+			Type: f.Type,
+		}
+		if f.ShortName != nil && *f.ShortName != f.Name {
+			helpFlags[i].ShortName = f.ShortName
+		}
+	}
+	return helpFlags
 }
 
 //TODO: refactor
@@ -297,18 +444,20 @@ func isParameterRequired(p *parser.FuncParam) bool {
 	return true
 }
 
-func addImports(param *parser.FuncParam, imports map[string]struct{}) {
+func getRequiredImportsForParam(param *parser.FuncParam) []string {
+	imports := make([]string, 0, 1)
 	switch param.Type.Base.CoreType {
 	case "int", "int8", "int16", "int32", "int64",
 		"uint", "uint8", "uint16", "uint32", "uint64",
 		"float32", "float64", "byte":
-		imports["strconv"] = struct{}{}
+		imports = append(imports, "strconv")
 	case "bool":
-		imports["strings"] = struct{}{}
+		imports = append(imports, "strings")
 	}
+	return imports
 }
 
-func generateCase(param *parser.FuncParam, f *flag) (string, error) {
+func generateCase(param *parser.FuncParam, f *types.Flag) (string, error) {
 	if len(param.Type.Layers) > 1 {
 		return "", fmt.Errorf("NYI")
 	}
@@ -361,7 +510,7 @@ func generateCase(param *parser.FuncParam, f *flag) (string, error) {
 	return fmt.Sprintf("%s\n%s\n%s", prefix, argParsing, postfix), nil
 }
 
-func generateCasePrefix(param *parser.FuncParam, f *flag) (string, error) {
+func generateCasePrefix(param *parser.FuncParam, f *types.Flag) (string, error) {
 	layersCount := len(param.Type.Layers)
 	prefixIn := &tmplArgCastPrefixInput{
 		FlagName:    f.Name,
@@ -493,22 +642,12 @@ func formatOutput(out string) (string, error) {
 	return string(outFormatted), nil
 }
 
-type flag struct {
-	Name      string
-	ShortName string
-	Type      string
-}
-
-func newFlag(p *parser.FuncParam) (*flag, error) {
-	if p == nil {
-		return nil,
-			fmt.Errorf("failed to create a flag: passed function parameter is nil")
-	}
-	f := &flag{
+func newFlag(p *parser.FuncParam) *types.Flag {
+	f := &types.Flag{
 		Name: p.Name,
 		Type: p.Type.ToString(),
 	}
-	return f, nil
+	return f
 }
 
 func generateMainFunc(scriptFuncs []*parser.PkgFunc, hasMain bool) (string, error) {

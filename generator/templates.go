@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"text/template"
+
+	"github.com/SergeyShpak/gosif/generator/types"
 )
 
 type tmplCastFunctionNameInput struct {
@@ -239,10 +241,16 @@ e.g. ./generated-binary {{$exampleScriptName}}
 	fmt.Fprint(stream, helpMsg)	
 }`))
 
+type helpFlagData struct {
+	Name      string
+	ShortName *string
+	Type      string
+}
+
 type tmplFuncHelpFunctionInput struct {
 	FunctionName  string
-	Flags         []flag
-	RequiredFlags []flag
+	Flags         []helpFlagData
+	RequiredFlags []helpFlagData
 }
 
 var tmplFuncHelpFunction = template.Must(template.New("FuncHelpFunction").
@@ -251,19 +259,19 @@ func gosif_Show{{.FunctionName}}Help(stream *os.File) {
 	helpMsg := ` + "`" + `Function {{.FunctionName}}
 	Required options:
 		{{- range $flag := .RequiredFlags }}
-		--{{$flag.Name | printf "%-10s"}}{{$flag.Type}}
+		{{if $flag.ShortName}} -{{$flag.ShortName}} /{{end}} --{{$flag.Name | printf "%-10s"}}{{$flag.Type}}
 		{{- end }}
 	Available options:
 		{{- range $flag := .Flags }}
-		--{{$flag.Name | printf "%-10s"}}{{$flag.Type}}
+		{{if $flag.ShortName}} -{{$flag.ShortName}} /{{end}} --{{$flag.Name | printf "%-10s"}}{{$flag.Type}}
 		{{- end }}
 ` + "`" + `
 	fmt.Fprint(stream, helpMsg)
 }`))
 
 type tmplParseFlagsFuncInput struct {
-	FuncFlags     []flag
-	RequiredFlags []flag
+	FuncFlags     []types.Flag
+	RequiredFlags []types.Flag
 	Cases         []string
 	FunctionName  string
 }
@@ -310,7 +318,7 @@ var tmplRunScriptFuncName = template.Must(tmplParseLoopName.New("RunScriptFuncNa
 
 type funcFlagStructureTmplInput struct {
 	FunctionName string
-	Flags        []flag
+	Flags        []types.Flag
 }
 
 var tmplFuncFlagsStruct = template.Must(tmplRunScriptFuncName.New("FuncFlagsStruct").Parse(`
