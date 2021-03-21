@@ -92,15 +92,6 @@ func extractDataFromParsedFunction(fn *parser.PkgFunc) (*FuncForGenerator, error
 	if err := generateShortFlagsNames(allFlags); err != nil {
 		return nil, err
 	}
-	for _, f := range allFlags {
-		if f.ShortName != nil {
-			fmt.Printf("Name: %s, short name: %v\n", f.Name, *f.ShortName)
-		} else {
-			fmt.Printf("Name: %s, short name: nil\n", f.Name)
-		}
-
-	}
-	os.Exit(0)
 	return data, nil
 }
 
@@ -292,7 +283,7 @@ func generateFromFunction(fn *FuncForGenerator, castFuncsMap map[string]string, 
 	requiredFlags := make([]types.Flag, 0, len(fn.RequiredParams))
 	for _, p := range fn.RequiredParams {
 		flags = append(flags, *p.Flag)
-		requiredFlags = append(flags, *p.Flag)
+		requiredFlags = append(requiredFlags, *p.Flag)
 	}
 	for _, p := range fn.OptionalParams {
 		flags = append(flags, *p.Flag)
