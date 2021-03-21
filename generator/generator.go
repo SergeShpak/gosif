@@ -279,14 +279,13 @@ func generateFromFunction(fn *FuncForGenerator, castFuncsMap map[string]string, 
 	if len(fn.RequiredParams) != 0 {
 		predefinedFuncsMap[funcCheckRequiredFlags.name] = funcCheckRequiredFlags.body
 	}
-	flags := make([]types.Flag, 0, len(params))
+	flags, err := composeFlagsList(params, fn)
+	if err != nil {
+		return "", err
+	}
 	requiredFlags := make([]types.Flag, 0, len(fn.RequiredParams))
 	for _, p := range fn.RequiredParams {
-		flags = append(flags, *p.Flag)
 		requiredFlags = append(requiredFlags, *p.Flag)
-	}
-	for _, p := range fn.OptionalParams {
-		flags = append(flags, *p.Flag)
 	}
 	flagStructTmplInput := &funcFlagStructureTmplInput{
 		Flags:        flags,
@@ -317,6 +316,35 @@ func generateFromFunction(fn *FuncForGenerator, castFuncsMap map[string]string, 
 	}
 	out := strings.Join([]string{out1, out2, out3, funcHelp}, "\n")
 	return out, nil
+}
+
+func composeFlagsList(params []*FuncParamData, fn *FuncForGenerator) ([]types.Flag, error) {
+	flags := make([]types.Flag, 0, len(params))
+	for _, p := range fn.ParsedFunc.Parameters {
+		found := false
+		for _, rf := range fn.RequiredParams {
+			if rf.RawParam.Name == p.Name {
+				flags = append(flags, *rf.Flag)
+				found = true
+				break
+			}
+		}
+		if found {
+			continue
+		}
+		for _, of := range fn.OptionalParams {
+			if of.RawParam.Name == p.Name {
+				flags = append(flags, *of.Flag)
+				found = true
+				break
+			}
+		}
+		if found {
+			continue
+		}
+		return nil, fmt.Errorf("flag %s not found", p.Name)
+	}
+	return flags, nil
 }
 
 func generateFuncHelpFunction(fn *parser.PkgFunc, flags []types.Flag, requiredFlags []types.Flag) (string, error) {

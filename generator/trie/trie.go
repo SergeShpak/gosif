@@ -6,6 +6,9 @@ import (
 
 // TODO(SSH): cover with tests
 func GetShortNames(names []string) (map[string]*string, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
 	t, err := newArgsTrie(names)
 	if err != nil {
 		return nil, err
